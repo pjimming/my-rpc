@@ -13,7 +13,7 @@ import (
 	"github.com/pjimming/my-rpc/codec"
 )
 
-const MagicNumber = 0x3bef5c
+const MagicNumber = 998244353
 
 type Option struct {
 	MagicNumber int        // MagicNumber marks this is a my-rpc request
