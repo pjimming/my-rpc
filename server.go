@@ -4,12 +4,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/pjimming/my-rpc/codec"
 	"io"
 	"log"
 	"net"
 	"reflect"
 	"sync"
+
+	"github.com/pjimming/my-rpc/codec"
 )
 
 const MagicNumber = 0x3bef5c
