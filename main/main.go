@@ -1,13 +1,13 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
-	myrpc "github.com/pjimming/my-rpc"
-	"github.com/pjimming/my-rpc/codec"
 	"log"
 	"net"
+	"sync"
 	"time"
+
+	myrpc "github.com/pjimming/my-rpc"
 )
 
 func main() {
@@ -15,24 +15,25 @@ func main() {
 	go startServer(addr)
 
 	// in fact, following code is like a simple my-rpc client
-	conn, _ := net.Dial("tcp", <-addr)
-	defer func() { _ = conn.Close() }()
+	client, _ := myrpc.Dial("tcp", <-addr)
+	defer func() { _ = client.Close() }()
 
 	time.Sleep(time.Second)
 	// send option
-	_ = json.NewEncoder(conn).Encode(myrpc.DefaultOption)
-	cc := codec.NewGobCodec(conn)
+	var wg sync.WaitGroup
 	for i := 0; i < 5; i++ {
-		h := &codec.Header{
-			ServiceMethod: "Foo.Sum",
-			Seq:           uint64(i),
-		}
-		_ = cc.Write(h, fmt.Sprintf("my-rpc req %d", h.Seq))
-		_ = cc.ReadHeader(h)
-		var reply string
-		_ = cc.ReadBody(&reply)
-		log.Printf("reply: %s", reply)
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			args := fmt.Sprintf("my-rpc req %d", i)
+			var reply string
+			if err := client.Call("Foo.Sum", args, &reply); err != nil {
+				log.Fatalf("call Foo.Sum fail, %v", err)
+			}
+			log.Printf("reply: %s", reply)
+		}(i)
 	}
+	wg.Wait()
 }
 
 func startServer(addr chan string) {
