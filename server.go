@@ -39,14 +39,14 @@ var DefaultServer = NewServer()
 
 // Accept accepts connection on the listener and serves requests
 // for each incoming connection
-func (s *Server) Accept(lis net.Listener) {
+func (server *Server) Accept(lis net.Listener) {
 	for {
 		conn, err := lis.Accept()
 		if err != nil {
 			log.Printf("rpc server: accept error: %v", err)
 			return
 		}
-		go s.ServeConn(conn)
+		go server.ServeConn(conn)
 	}
 }
 
@@ -54,7 +54,7 @@ func (s *Server) Accept(lis net.Listener) {
 // for each incoming connection.
 func Accept(lis net.Listener) { DefaultServer.Accept(lis) }
 
-func (s *Server) ServeConn(conn io.ReadWriteCloser) {
+func (server *Server) ServeConn(conn io.ReadWriteCloser) {
 	defer func() { _ = conn.Close() }()
 	var opt Option
 	if err := json.NewDecoder(conn).Decode(&opt); err != nil {
@@ -69,10 +69,10 @@ func (s *Server) ServeConn(conn io.ReadWriteCloser) {
 
 	f := codec.NewCodecFuncMap[opt.CodecType]
 	if f == nil {
-		log.Printf("rpc server: invalid codec type %s", opt.CodecType)
+		log.Printf("rpc server: invalid codec type %server", opt.CodecType)
 		return
 	}
-	s.serveCodec(f(conn))
+	server.serveCodec(f(conn))
 }
 
 var invalidRequest = struct {
@@ -81,22 +81,22 @@ var invalidRequest = struct {
 // 1. readRequest
 // 2. handleRequest
 // 3. sendRequest
-func (s *Server) serveCodec(cc codec.Codec) {
+func (server *Server) serveCodec(cc codec.Codec) {
 	sending := new(sync.Mutex)
 	wg := new(sync.WaitGroup)
 	for {
-		req, err := s.readRequest(cc)
+		req, err := server.readRequest(cc)
 		if err != nil {
 			if req == nil {
-				// it's not possible to recover, so close the connection
+				// it'server not possible to recover, so close the connection
 				break
 			}
 			req.h.Error = err.Error()
-			s.sendResponse(cc, req.h, invalidRequest, sending)
+			server.sendResponse(cc, req.h, invalidRequest, sending)
 			continue
 		}
 		wg.Add(1)
-		go s.handleResponse(cc, req, sending, wg)
+		go server.handleResponse(cc, req, sending, wg)
 	}
 	wg.Wait()
 	_ = cc.Close()
@@ -107,7 +107,7 @@ type request struct {
 	argv, replyv reflect.Value
 }
 
-func (s *Server) readRequestHeader(cc codec.Codec) (*codec.Header, error) {
+func (server *Server) readRequestHeader(cc codec.Codec) (*codec.Header, error) {
 	var h codec.Header
 	if err := cc.ReadHeader(&h); err != nil {
 		if !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
@@ -118,8 +118,8 @@ func (s *Server) readRequestHeader(cc codec.Codec) (*codec.Header, error) {
 	return &h, nil
 }
 
-func (s *Server) readRequest(cc codec.Codec) (*request, error) {
-	h, err := s.readRequestHeader(cc)
+func (server *Server) readRequest(cc codec.Codec) (*request, error) {
+	h, err := server.readRequestHeader(cc)
 	if err != nil {
 		return nil, err
 	}
@@ -134,7 +134,7 @@ func (s *Server) readRequest(cc codec.Codec) (*request, error) {
 	return req, nil
 }
 
-func (s *Server) sendResponse(cc codec.Codec, h *codec.Header, body interface{}, sending *sync.Mutex) {
+func (server *Server) sendResponse(cc codec.Codec, h *codec.Header, body interface{}, sending *sync.Mutex) {
 	sending.Lock()
 	defer sending.Unlock()
 	if err := cc.Write(h, body); err != nil {
@@ -142,11 +142,11 @@ func (s *Server) sendResponse(cc codec.Codec, h *codec.Header, body interface{},
 	}
 }
 
-func (s *Server) handleResponse(cc codec.Codec, req *request, sending *sync.Mutex, wg *sync.WaitGroup) {
+func (server *Server) handleResponse(cc codec.Codec, req *request, sending *sync.Mutex, wg *sync.WaitGroup) {
 	// TODO, should call registered rpc methods to get the right replyv
 	// day 1, just print argv and send a hello message
 	defer wg.Done()
 	log.Println(req.h, req.argv.Elem())
 	req.replyv = reflect.ValueOf(fmt.Sprintf("my-rpc resp %d", req.h.Seq))
-	s.sendResponse(cc, req.h, req.replyv.Interface(), sending)
+	server.sendResponse(cc, req.h, req.replyv.Interface(), sending)
 }
