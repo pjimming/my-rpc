@@ -88,7 +88,7 @@ func (server *Server) ServeConn(conn io.ReadWriteCloser) {
 		log.Printf("rpc server: invalid codec type %server", opt.CodecType)
 		return
 	}
-	server.serveCodec(f(conn))
+	server.serveCodec(f(conn), opt.HandleTimeout)
 }
 
 var invalidRequest = struct {
@@ -97,7 +97,7 @@ var invalidRequest = struct {
 // 1. readRequest
 // 2. handleRequest
 // 3. sendResponse
-func (server *Server) serveCodec(cc codec.Codec) {
+func (server *Server) serveCodec(cc codec.Codec, timeout time.Duration) {
 	sending := new(sync.Mutex)
 	wg := new(sync.WaitGroup)
 	for {
@@ -112,7 +112,7 @@ func (server *Server) serveCodec(cc codec.Codec) {
 			continue
 		}
 		wg.Add(1)
-		go server.handleRequest(cc, req, sending, wg, 0)
+		go server.handleRequest(cc, req, sending, wg, timeout)
 	}
 	wg.Wait()
 	_ = cc.Close()
