@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"log"
 	"net"
 	"sync"
@@ -9,6 +8,17 @@ import (
 
 	myrpc "github.com/pjimming/my-rpc"
 )
+
+type Foo int
+
+type Args struct {
+	Num1, Num2 int
+}
+
+func (f Foo) Sum(args Args, reply *int) error {
+	*reply = args.Num1 + args.Num2
+	return nil
+}
 
 func main() {
 	addr := make(chan string)
@@ -25,18 +35,25 @@ func main() {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			args := fmt.Sprintf("my-rpc req %d", i)
-			var reply string
+			args := &Args{
+				Num1: i,
+				Num2: i * i,
+			}
+			var reply int
 			if err := client.Call("Foo.Sum", args, &reply); err != nil {
 				log.Fatalf("call Foo.Sum fail, %v", err)
 			}
-			log.Printf("reply: %s", reply)
+			log.Printf("%d + %d = %d", args.Num1, args.Num2, reply)
 		}(i)
 	}
 	wg.Wait()
 }
 
 func startServer(addr chan string) {
+	var foo Foo
+	if err := myrpc.Register(&foo); err != nil {
+		log.Fatalf("register fail: %v", err)
+	}
 	// pick a free port
 	l, err := net.Listen("tcp", ":0")
 	if err != nil {

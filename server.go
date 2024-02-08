@@ -8,6 +8,7 @@ import (
 	"log"
 	"net"
 	"reflect"
+	"strings"
 	"sync"
 
 	"github.com/pjimming/my-rpc/codec"
@@ -27,6 +28,7 @@ var DefaultOption = &Option{
 
 // Server represents an RPC Server.
 type Server struct {
+	serviceMap sync.Map
 }
 
 // NewServer returns a new Server.
@@ -36,6 +38,16 @@ func NewServer() *Server {
 
 // DefaultServer is the default instance of *Server.
 var DefaultServer = NewServer()
+
+func (server *Server) Register(rcvr interface{}) error {
+	s := newService(rcvr)
+	if _, dup := server.serviceMap.LoadOrStore(s.name, s); dup {
+		return fmt.Errorf("rpc: service %s already defined", s.name)
+	}
+	return nil
+}
+
+func Register(rcvr interface{}) error { return DefaultServer.Register(rcvr) }
 
 // Accept accepts connection on the listener and serves requests
 // for each incoming connection
@@ -105,6 +117,8 @@ func (server *Server) serveCodec(cc codec.Codec) {
 type request struct {
 	h            *codec.Header // header of request
 	argv, replyv reflect.Value
+	mType        *methodType
+	svc          *service
 }
 
 func (server *Server) readRequestHeader(cc codec.Codec) (*codec.Header, error) {
@@ -125,11 +139,22 @@ func (server *Server) readRequest(cc codec.Codec) (*request, error) {
 	}
 
 	req := &request{h: h}
-	// TODO: now we don't know the type of request argv
-	// day 1, just suppose it's string
-	req.argv = reflect.New(reflect.TypeOf(""))
-	if err = cc.ReadBody(req.argv.Interface()); err != nil {
+	req.svc, req.mType, err = server.findService(h.ServiceMethod)
+	if err != nil {
+		return req, err
+	}
+
+	req.argv = req.mType.newArgv()
+	req.replyv = req.mType.newReplyv()
+
+	// make sure that argvi is a pointer, ReadBody need a pointer as parameter
+	argvi := req.argv.Interface()
+	if req.argv.Type().Kind() != reflect.Ptr {
+		argvi = req.argv.Addr().Interface()
+	}
+	if err = cc.ReadBody(argvi); err != nil {
 		log.Printf("rpc server: read argv error: %v", err)
+		return req, err
 	}
 	return req, nil
 }
@@ -143,10 +168,34 @@ func (server *Server) sendResponse(cc codec.Codec, h *codec.Header, body interfa
 }
 
 func (server *Server) handleResponse(cc codec.Codec, req *request, sending *sync.Mutex, wg *sync.WaitGroup) {
-	// TODO, should call registered rpc methods to get the right replyv
-	// day 1, just print argv and send a hello message
 	defer wg.Done()
-	log.Println(req.h, req.argv.Elem())
-	req.replyv = reflect.ValueOf(fmt.Sprintf("my-rpc resp %d", req.h.Seq))
+	err := req.svc.call(req.mType, req.argv, req.replyv)
+	if err != nil {
+		req.h.Error = err.Error()
+		server.sendResponse(cc, req.h, invalidRequest, sending)
+		return
+	}
 	server.sendResponse(cc, req.h, req.replyv.Interface(), sending)
+}
+
+func (server *Server) findService(serviceMethod string) (svc *service, mType *methodType, err error) {
+	dot := strings.LastIndex(serviceMethod, ".")
+	if dot < 0 {
+		err = fmt.Errorf("rpc server: service.method request ill-formed: %s", serviceMethod)
+		return
+	}
+
+	serviceName, methodName := serviceMethod[:dot], serviceMethod[dot+1:]
+	svci, ok := server.serviceMap.Load(serviceName)
+	if !ok {
+		err = fmt.Errorf("rpc server: can't find service %s", serviceName)
+		return
+	}
+
+	svc = svci.(*service)
+	mType = svc.method[methodName]
+	if mType == nil {
+		err = fmt.Errorf("rpc server: can't find method %s", methodName)
+	}
+	return
 }
