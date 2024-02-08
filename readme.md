@@ -12,7 +12,7 @@
 
 ### 遇到的问题
 #### 1. Goroutine 泄漏
-使用 finish chan 来通知协程关闭，避免协程泄漏
+使用 `chan` 来通知协程关闭，避免协程泄漏
 ```go
 finish := make(chan struct{})
 defer close(finish)
