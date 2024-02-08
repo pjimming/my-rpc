@@ -1,12 +1,13 @@
 package main
 
 import (
+	"context"
+	myrpc "github.com/pjimming/my-rpc"
 	"log"
 	"net"
+	"net/http"
 	"sync"
 	"time"
-
-	myrpc "github.com/pjimming/my-rpc"
 )
 
 type Foo int
@@ -22,10 +23,13 @@ func (f Foo) Sum(args Args, reply *int) error {
 
 func main() {
 	addr := make(chan string)
-	go startServer(addr)
+	go call(addr)
+	startServer(addr)
+}
 
+func call(addrCh chan string) {
 	// in fact, following code is like a simple my-rpc client
-	client, _ := myrpc.Dial("tcp", <-addr)
+	client, _ := myrpc.DialHTTP("tcp", <-addrCh)
 	defer func() { _ = client.Close() }()
 
 	time.Sleep(time.Second)
@@ -40,7 +44,7 @@ func main() {
 				Num2: i * i,
 			}
 			var reply int
-			if err := client.Call("Foo.Sum", args, &reply); err != nil {
+			if err := client.Call(context.Background(), "Foo.Sum", args, &reply); err != nil {
 				log.Fatalf("call Foo.Sum fail, %v", err)
 			}
 			log.Printf("%d + %d = %d", args.Num1, args.Num2, reply)
@@ -55,12 +59,12 @@ func startServer(addr chan string) {
 		log.Fatalf("register fail: %v", err)
 	}
 	// pick a free port
-	l, err := net.Listen("tcp", ":0")
+	l, err := net.Listen("tcp", ":9999")
 	if err != nil {
 		log.Fatalf("network error: %v", err)
 	}
-
+	myrpc.HandleHTTP()
 	log.Printf("start rpc server on: %s", l.Addr())
 	addr <- l.Addr().String()
-	myrpc.Accept(l)
+	_ = http.Serve(l, nil)
 }

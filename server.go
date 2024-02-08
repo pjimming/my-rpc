@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"net/http"
 	"reflect"
 	"strings"
 	"sync"
@@ -14,8 +15,6 @@ import (
 
 	"github.com/pjimming/my-rpc/codec"
 )
-
-const MagicNumber = 998244353
 
 type Option struct {
 	MagicNumber    int           // MagicNumber marks this is a my-rpc request
@@ -233,4 +232,36 @@ func (server *Server) findService(serviceMethod string) (svc *service, mType *me
 		err = fmt.Errorf("rpc server: can't find method %s", methodName)
 	}
 	return
+}
+
+// ServeHTTP implements an http.Handler that answers RPC requests.
+func (server *Server) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodConnect {
+		w.Header().Set("content-type", "text/plain: charset=utf-8")
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		_, _ = io.WriteString(w, methodNotAllowed+"\n")
+		return
+	}
+
+	conn, _, err := w.(http.Hijacker).Hijack()
+	if err != nil {
+		log.Printf("rpc hijacking %s fail, %v", req.RemoteAddr, err)
+		return
+	}
+
+	_, _ = io.WriteString(conn, "HTTP/1.1 "+connected+"\n\n")
+	server.ServeConn(conn)
+}
+
+// HandleHTTP registers an HTTP handler for RPC messages on rpcPath.
+// It is still necessary to invoke http.Serve(), typically in a go statement.
+func (server *Server) HandleHTTP() {
+	http.Handle(defaultRPCPath, server)
+	http.Handle(defaultDebugPath, debugHTTP{server})
+	log.Printf("rpc server debug path: %s", defaultDebugPath)
+}
+
+// HandleHTTP is a convenient approach for default server to register HTTP handlers
+func HandleHTTP() {
+	DefaultServer.HandleHTTP()
 }
