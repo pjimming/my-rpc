@@ -2,69 +2,114 @@ package main
 
 import (
 	"context"
-	myrpc "github.com/pjimming/my-rpc"
 	"log"
 	"net"
 	"net/http"
 	"sync"
 	"time"
+
+	myrpc "github.com/pjimming/my-rpc"
+	"github.com/pjimming/my-rpc/registry"
+	"github.com/pjimming/my-rpc/xclient"
 )
 
 type Foo int
 
-type Args struct {
-	Num1, Num2 int
-}
+type Args struct{ Num1, Num2 int }
 
 func (f Foo) Sum(args Args, reply *int) error {
 	*reply = args.Num1 + args.Num2
 	return nil
 }
 
-func main() {
-	addr := make(chan string)
-	go call(addr)
-	startServer(addr)
+func (f Foo) Sleep(args Args, reply *int) error {
+	time.Sleep(time.Second * time.Duration(args.Num1))
+	*reply = args.Num1 + args.Num2
+	return nil
 }
 
-func call(addrCh chan string) {
-	// in fact, following code is like a simple my-rpc client
-	client, _ := myrpc.DialHTTP("tcp", <-addrCh)
-	defer func() { _ = client.Close() }()
+func startRegistry(wg *sync.WaitGroup) {
+	l, _ := net.Listen("tcp", ":9999")
+	registry.HandleHTTP()
+	wg.Done()
+	_ = http.Serve(l, nil)
+}
 
-	time.Sleep(time.Second)
-	// send option
+func startServer(registryAddr string, wg *sync.WaitGroup) {
+	var foo Foo
+	l, _ := net.Listen("tcp", ":0")
+	server := myrpc.NewServer()
+	_ = server.Register(&foo)
+	registry.Heartbeat(registryAddr, "tcp@"+l.Addr().String(), 0)
+	wg.Done()
+	server.Accept(l)
+}
+
+func foo(xc *xclient.XClient, ctx context.Context, typ, serviceMethod string, args *Args) {
+	var reply int
+	var err error
+	switch typ {
+	case "call":
+		err = xc.Call(ctx, serviceMethod, args, &reply)
+	case "broadcast":
+		err = xc.Broadcast(ctx, serviceMethod, args, &reply)
+	}
+	if err != nil {
+		log.Printf("%s %s error: %v", typ, serviceMethod, err)
+	} else {
+		log.Printf("%s %s success: %d + %d = %d", typ, serviceMethod, args.Num1, args.Num2, reply)
+	}
+}
+
+func call(registry string) {
+	d := xclient.NewRegistryDiscovery(registry, 0)
+	xc := xclient.NewXClient(d, xclient.RandomSelect, nil)
+	defer func() { _ = xc.Close() }()
+	// send request & receive response
 	var wg sync.WaitGroup
 	for i := 0; i < 5; i++ {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			args := &Args{
-				Num1: i,
-				Num2: i * i,
-			}
-			var reply int
-			if err := client.Call(context.Background(), "Foo.Sum", args, &reply); err != nil {
-				log.Fatalf("call Foo.Sum fail, %v", err)
-			}
-			log.Printf("%d + %d = %d", args.Num1, args.Num2, reply)
+			foo(xc, context.Background(), "call", "Foo.Sum", &Args{Num1: i, Num2: i * i})
 		}(i)
 	}
 	wg.Wait()
 }
 
-func startServer(addr chan string) {
-	var foo Foo
-	if err := myrpc.Register(&foo); err != nil {
-		log.Fatalf("register fail: %v", err)
+func broadcast(registry string) {
+	d := xclient.NewRegistryDiscovery(registry, 0)
+	xc := xclient.NewXClient(d, xclient.RandomSelect, nil)
+	defer func() { _ = xc.Close() }()
+	var wg sync.WaitGroup
+	for i := 0; i < 5; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			foo(xc, context.Background(), "broadcast", "Foo.Sum", &Args{Num1: i, Num2: i * i})
+			// expect 2 - 5 timeout
+			ctx, _ := context.WithTimeout(context.Background(), time.Second*2)
+			foo(xc, ctx, "broadcast", "Foo.Sleep", &Args{Num1: i, Num2: i * i})
+		}(i)
 	}
-	// pick a free port
-	l, err := net.Listen("tcp", ":9999")
-	if err != nil {
-		log.Fatalf("network error: %v", err)
-	}
-	myrpc.HandleHTTP()
-	log.Printf("start rpc server on: %s", l.Addr())
-	addr <- l.Addr().String()
-	_ = http.Serve(l, nil)
+	wg.Wait()
+}
+
+func main() {
+	log.SetFlags(0)
+	registryAddr := "http://localhost:9999/_myrpc_/registry"
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go startRegistry(&wg)
+	wg.Wait()
+
+	time.Sleep(time.Second)
+	wg.Add(2)
+	go startServer(registryAddr, &wg)
+	go startServer(registryAddr, &wg)
+	wg.Wait()
+
+	time.Sleep(time.Second)
+	call(registryAddr)
+	broadcast(registryAddr)
 }
