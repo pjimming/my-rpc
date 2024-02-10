@@ -1,7 +1,7 @@
 package my_rpc
 
 import (
-	"encoding/json"
+	"encoding/gob"
 	"errors"
 	"fmt"
 	"io"
@@ -72,7 +72,7 @@ func Accept(lis net.Listener) { DefaultServer.Accept(lis) }
 func (server *Server) ServeConn(conn io.ReadWriteCloser) {
 	defer func() { _ = conn.Close() }()
 	var opt Option
-	if err := json.NewDecoder(conn).Decode(&opt); err != nil {
+	if err := gob.NewDecoder(conn).Decode(&opt); err != nil {
 		log.Printf("rpc server: options error: %v", err)
 		return
 	}

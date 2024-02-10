@@ -3,7 +3,7 @@ package my_rpc
 import (
 	"bufio"
 	"context"
-	"encoding/json"
+	"encoding/gob"
 	"errors"
 	"fmt"
 	"io"
@@ -51,7 +51,7 @@ func NewClient(conn net.Conn, opt *Option) (*Client, error) {
 	}
 
 	// send option with server
-	if err := json.NewEncoder(conn).Encode(opt); err != nil {
+	if err := gob.NewEncoder(conn).Encode(opt); err != nil {
 		log.Printf("rpc client: option error: %v", err)
 		_ = conn.Close()
 		return nil, err
